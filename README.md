@@ -50,9 +50,15 @@ For an app that works 24/7, build a standalone APK. The code is bundled inside
 it, so it needs nothing running anywhere:
 
 ```bash
-npx eas login
-npx eas build --platform android --profile preview
+npm install -g eas-cli
+eas login
+eas build --platform android --profile preview
 ```
+
+The binary is `eas` but the package is `eas-cli`. Do not run `npx eas` — an
+unrelated `eas` package exists on npm that ships no executable, so npm fails with
+`could not determine executable to run`. Without installing globally, the working
+form is `npx eas-cli@latest login`.
 
 Download the APK from the build page and install it. Then long-press the home
 screen → Widgets → Semester Tracker → **Timetable**.
