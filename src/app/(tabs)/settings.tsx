@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
-import { Alert, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import {
   Body,
@@ -18,13 +18,13 @@ import {
   Title,
   useTheme,
 } from '@/components/ui';
+import { useConfirm } from '@/components/confirm-dialog';
 import { Radius } from '@/constants/theme';
 import { exportDatabase, pickBackup, type PickedBackup } from '@/lib/backup';
 import { canFetchUrl, fetchFeed, pickFeedFile } from '@/lib/import-timetable';
 import { dedupeClasses, parseTimetable, type ParsedClass } from '@/lib/ical';
 import {
   useActiveTerm,
-  useAddSubject,
   useClasses,
   useDatabaseSnapshot,
   useDeleteSubject,
@@ -272,13 +272,8 @@ function SubjectsCard({
   subjects: { id: string; code: string; name: string | null }[];
 }) {
   const colors = useTheme();
-  const add = useAddSubject(termId);
   const remove = useDeleteSubject(termId);
-
-  const [code, setCode] = useState('');
-  const [name, setName] = useState('');
-
-  const duplicate = subjects.some((subject) => subject.code === code.trim().toUpperCase());
+  const { confirm, dialog } = useConfirm();
 
   return (
     <Card style={styles.card}>
@@ -299,14 +294,12 @@ function SubjectsCard({
                 <Pressable
                   hitSlop={12}
                   onPress={() =>
-                    Alert.alert(
-                      `Delete ${subject.code}?`,
-                      'Every topic and status for this subject is deleted too. This cannot be undone.',
-                      [
-                        { text: 'Cancel', style: 'cancel' },
-                        { text: 'Delete', style: 'destructive', onPress: () => remove.mutate(subject.id) },
-                      ],
-                    )
+                    confirm({
+                      title: `Delete ${subject.code}?`,
+                      message:
+                        'Every topic and status for this subject is deleted too. This cannot be undone.',
+                      onConfirm: () => remove.mutate(subject.id),
+                    })
                   }>
                   <Ionicons name="trash-outline" size={16} color={colors.danger} />
                 </Pressable>
@@ -316,54 +309,10 @@ function SubjectsCard({
         </View>
       )}
 
-      <Divider />
+      <Caption colour="textFaint">Add a subject from the Today tab.</Caption>
+      <ErrorNote error={remove.error} />
 
-      <Row style={styles.fieldRow}>
-        <TextInput
-          style={[
-            styles.input,
-            styles.flex,
-            { color: colors.text, backgroundColor: colors.background, borderColor: colors.border },
-          ]}
-          value={code}
-          onChangeText={setCode}
-          placeholder="COMP3311"
-          placeholderTextColor={colors.textFaint}
-          autoCapitalize="characters"
-          autoCorrect={false}
-        />
-        <TextInput
-          style={[
-            styles.input,
-            styles.flexWide,
-            { color: colors.text, backgroundColor: colors.background, borderColor: colors.border },
-          ]}
-          value={name}
-          onChangeText={setName}
-          placeholder="Database Systems (optional)"
-          placeholderTextColor={colors.textFaint}
-        />
-      </Row>
-
-      {duplicate && <Caption colour="danger">That course is already in this term.</Caption>}
-      <ErrorNote error={add.error ?? remove.error} />
-
-      <Button
-        title="Add subject"
-        disabled={code.trim().length === 0 || duplicate}
-        loading={add.isPending}
-        onPress={() =>
-          add.mutate(
-            { code, name, position: subjects.length },
-            {
-              onSuccess: () => {
-                setCode('');
-                setName('');
-              },
-            },
-          )
-        }
-      />
+      {dialog}
     </Card>
   );
 }
@@ -522,8 +471,7 @@ const styles = StyleSheet.create({
   card: { marginTop: Spacing.five },
   field: { gap: Spacing.two },
   fieldRow: { alignItems: 'flex-end', gap: Spacing.three },
-  flex: { flex: 1 },
-  flexWide: { flex: 1.6 },
+  flex: { flex: 1, minWidth: 0 },
   input: {
     borderWidth: StyleSheet.hairlineWidth,
     borderRadius: Radius.medium,

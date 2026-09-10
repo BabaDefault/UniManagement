@@ -1,9 +1,11 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { Alert, Modal, Pressable, StyleSheet, View } from 'react-native';
+import { Modal, Pressable, StyleSheet, View } from 'react-native';
 
 import { BulkPasteSheet } from '@/components/bulk-paste-sheet';
+import { useConfirm } from '@/components/confirm-dialog';
+import { HeaderBack } from '@/components/header-back';
 import {
   Body,
   Button,
@@ -20,6 +22,7 @@ import {
   Screen,
   Spacing,
   StatusDot,
+  StatusLegend,
   SummaryLine,
   Title,
   useTheme,
@@ -53,6 +56,7 @@ export default function WeekScreen() {
 
   const [pasteOpen, setPasteOpen] = useState(false);
   const [picking, setPicking] = useState<SubtopicNode | null>(null);
+  const { confirm, dialog } = useConfirm();
 
   const subject = findSubject(tree.data ?? [], id);
 
@@ -69,16 +73,22 @@ export default function WeekScreen() {
     subtopics: topic.subtopics.map((subtopic) => ({ id: subtopic.id, title: subtopic.title })),
   }));
 
-  function confirmDelete(title: string, onConfirm: () => void) {
-    Alert.alert('Delete', `Delete "${title}"? This cannot be undone.`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: onConfirm },
-    ]);
+  function confirmDelete(title: string, what: string, onConfirm: () => void) {
+    confirm({
+      title: `Delete ${what}?`,
+      message: `"${title}" and everything under it. This cannot be undone.`,
+      onConfirm,
+    });
   }
 
   return (
     <>
-      <Stack.Screen options={{ title: `${subject.code} · ${label}` }} />
+      <Stack.Screen
+        options={{
+          title: `${subject.code} · ${label}`,
+          headerLeft: () => <HeaderBack fallback={{ pathname: '/subject/[id]', params: { id } }} />,
+        }}
+      />
       <Screen insetTop={false}>
         <Label>{subject.code}</Label>
         <Title>{label}</Title>
@@ -111,14 +121,10 @@ export default function WeekScreen() {
                   <Row style={styles.spaceBetween}>
                     <View style={styles.topicHeading}>
                       <Heading>{topic.title}</Heading>
-                      <Caption colour="textFaint">
-                        {topicRollup.total} item{topicRollup.total === 1 ? '' : 's'}
-                        {topicRollup.weak > 0 ? ` · ${topicRollup.weak} need work` : ''}
-                      </Caption>
                     </View>
                     <Pressable
                       hitSlop={12}
-                      onPress={() => confirmDelete(topic.title, () => deleteTopic.mutate(topic.id))}>
+                      onPress={() => confirmDelete(topic.title, 'this topic', () => deleteTopic.mutate(topic.id))}>
                       <Ionicons name="trash-outline" size={16} color={STATUS_COLOR.red} />
                     </Pressable>
                   </Row>
@@ -151,6 +157,8 @@ export default function WeekScreen() {
           Tap to move a subtopic up the scale, long-press to pick a level or delete it.
         </Caption>
 
+        <StatusLegend />
+
         <ErrorNote error={setStatus.error ?? applyPaste.error ?? deleteTopic.error ?? deleteSubtopic.error} />
       </Screen>
 
@@ -179,9 +187,11 @@ export default function WeekScreen() {
         onDelete={() => {
           const target = picking;
           setPicking(null);
-          if (target) confirmDelete(target.title, () => deleteSubtopic.mutate(target.id));
+          if (target) confirmDelete(target.title, 'this subtopic', () => deleteSubtopic.mutate(target.id));
         }}
       />
+
+      {dialog}
     </>
   );
 }
@@ -202,9 +212,13 @@ function SubtopicRow({
       onPress={onCycle}
       onLongPress={onLongPress}
       style={({ pressed }) => [styles.subtopicRow, { opacity: pressed ? 0.6 : 1 }]}>
+      {/*
+        Just the dot and the name. The status is carried by colour alone here;
+        the wording still reaches screen readers via accessibilityLabel above,
+        and long-pressing opens the picker where every level is named.
+      */}
       <StatusDot status={subtopic.status} size={14} />
       <Body style={styles.subtopicTitle}>{subtopic.title}</Body>
-      <Caption colour="textFaint">{STATUS_LABEL[subtopic.status]}</Caption>
     </Pressable>
   );
 }

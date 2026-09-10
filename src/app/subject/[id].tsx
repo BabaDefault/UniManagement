@@ -1,6 +1,7 @@
 import { Link, Stack, useLocalSearchParams } from 'expo-router';
 import { Pressable, StyleSheet, View } from 'react-native';
 
+import { HeaderBack } from '@/components/header-back';
 import {
   Body,
   Caption,
@@ -48,7 +49,7 @@ export default function SubjectScreen() {
 
   return (
     <>
-      <Stack.Screen options={{ title: subject.code }} />
+      <Stack.Screen options={{ title: subject.code, headerLeft: () => <HeaderBack fallback="/" /> }} />
       <Screen insetTop={false}>
         <Label>{term.data.code}</Label>
         <Title>{subject.code}</Title>
@@ -158,19 +159,31 @@ const styles = StyleSheet.create({
   overall: { marginTop: Spacing.five },
   sectionHeader: { marginTop: Spacing.six, marginBottom: Spacing.three },
   spaceBetween: { justifyContent: 'space-between' },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.three },
-  tileTouch: { width: 76, height: 72 },
+  /*
+    Five to a row, two rows for a ten-week term. Percentage widths rather than
+    fixed ones plus `gap`: on web, flex items shrink by default, so fixed-width
+    tiles were being squeezed to about 45px and their contents spilled out.
+    The gutter comes from padding inside each cell, cancelled at the edges by
+    the negative margins here, so every tile is exactly a fifth of the width.
+  */
+  grid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginHorizontal: -Spacing.two,
+    marginTop: -Spacing.two,
+  },
+  tileTouch: { width: '20%', padding: Spacing.two },
   tile: {
-    flex: 1,
+    height: 88,
     borderRadius: Radius.medium,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: Spacing.half,
+    gap: Spacing.one,
     paddingVertical: Spacing.two,
   },
-  tileLabel: { fontWeight: '700' },
-  tileValue: { fontSize: 12 },
-  markerRow: { height: 4, justifyContent: 'center' },
-  weakMarker: { width: 16, height: 3, borderRadius: 2 },
+  tileLabel: { fontSize: 15, fontWeight: '700' },
+  tileValue: { fontSize: 13 },
+  markerRow: { height: 5, justifyContent: 'center' },
+  weakMarker: { width: 20, height: 3, borderRadius: 2 },
   legend: { marginTop: Spacing.four },
 });

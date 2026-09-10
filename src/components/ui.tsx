@@ -15,7 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors, MaxContentWidth, Radius, Spacing, type ThemeColors } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { formatPercent, summaryStatus, type Summary } from '@/lib/progress';
-import { STATUS_COLOR, STATUS_EMOJI, STATUS_LABEL, type Status } from '@/lib/status';
+import { STATUS_COLOR, STATUS_EMOJI, STATUS_LABEL, STATUSES, type Status } from '@/lib/status';
 
 export { useTheme };
 
@@ -226,6 +226,26 @@ export function SummaryLine({ summary }: { summary: Summary }) {
   return <Caption>{parts.join('  ·  ')}</Caption>;
 }
 
+/**
+ * What the dots mean.
+ *
+ * The subtopic rows carry status by colour alone, so the scale has to be
+ * written down somewhere on the same screen — otherwise the colours are only
+ * meaningful to whoever remembers the order.
+ */
+export function StatusLegend({ align = 'flex-end' }: { align?: 'flex-start' | 'flex-end' }) {
+  return (
+    <View style={[styles.legend, { alignSelf: align }]}>
+      {STATUSES.map((status) => (
+        <View key={status} style={styles.legendRow}>
+          <StatusDot status={status} size={8} />
+          <Caption colour="textFaint">{STATUS_LABEL[status]}</Caption>
+        </View>
+      ))}
+    </View>
+  );
+}
+
 // -------------------------------------------------------------------- states
 
 export function EmptyState({ title, detail, action }: { title: string; detail?: string; action?: ReactNode }) {
@@ -300,6 +320,8 @@ const styles = StyleSheet.create({
   },
   pillText: { fontSize: 11, fontWeight: '700' },
   track: { width: '100%', overflow: 'hidden' },
+  legend: { gap: Spacing.one, marginTop: Spacing.four },
+  legendRow: { flexDirection: 'row', alignItems: 'center', gap: Spacing.two },
   empty: { alignItems: 'center', paddingVertical: Spacing.five },
   emptyTitle: { textAlign: 'center' },
   emptyDetail: { textAlign: 'center' },
