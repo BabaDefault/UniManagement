@@ -411,10 +411,14 @@ function ImportCard({ term, importedCount }: { term: Term; importedCount: number
 
   return (
     <Card style={styles.card}>
-      <Heading>Timetable</Heading>
+      <Heading>Import a timetable</Heading>
       <Caption colour="textSecondary">
-        myUNSW → Class Timetable → &quot;personal iCal link&quot; (top-left). Importing replaces this term&apos;s
-        classes.
+        Optional. Most classes are quicker to add by hand on the Timetable tab, especially if you attend a
+        friend&apos;s tutorial rather than your own. This just saves typing if your enrolment is accurate:
+        myUNSW → Class Timetable → &quot;personal iCal link&quot; (top-left).
+      </Caption>
+      <Caption colour="textFaint">
+        Importing replaces previously imported classes. Classes you added by hand are never touched.
       </Caption>
       {importedCount > 0 && <Caption colour="textFaint">{importedCount} classes imported.</Caption>}
 

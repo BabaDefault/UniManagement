@@ -1,8 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Link } from 'expo-router';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Pressable, RefreshControl, StyleSheet, View } from 'react-native';
 
+import { AddSubjectSheet } from '@/components/add-subject-sheet';
 import {
   Body,
   Button,
@@ -26,7 +27,7 @@ import {
 import { useNow } from '@/hooks/use-now';
 import { useWidgetSync } from '@/hooks/use-widget-sync';
 import { formatPercent } from '@/lib/progress';
-import { useActiveTerm, useClasses, useCreateTerm, useTree } from '@/lib/queries';
+import { useActiveTerm, useAddSubject, useClasses, useCreateTerm, useTree } from '@/lib/queries';
 import {
   formatCountdown,
   formatDayLabel,
@@ -46,6 +47,9 @@ export default function TodayScreen() {
   const tree = useTree(term.data?.id);
   const classes = useClasses(term.data?.id);
   const createTerm = useCreateTerm();
+  const addSubject = useAddSubject();
+
+  const [addOpen, setAddOpen] = useState(false);
 
   const events = useMemo(() => toClassEvents(classes.data ?? []), [classes.data]);
   const subjects = tree.data ?? [];
@@ -88,6 +92,7 @@ export default function TodayScreen() {
   };
 
   return (
+    <>
     <Screen refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}>
       <Label>{term.data.code}</Label>
       <Title>{weekLabel(week, term.data)}</Title>
@@ -109,11 +114,15 @@ export default function TodayScreen() {
 
       <UpNextCard events={events} now={now} hasClasses={events.length > 0} />
 
-      <SectionHeader title="Subjects" />
+      <SectionHeader title="Subjects" onAdd={() => setAddOpen(true)} addLabel="Add subject" />
       {tree.isLoading ? (
         <Loading />
       ) : subjects.length === 0 ? (
-        <EmptyState title="No subjects yet" detail="Add your courses in Settings, then paste in each week's topics." />
+        <EmptyState
+          title="No subjects yet"
+          detail="Add your courses, then paste in each week's topics as you go."
+          action={<Button title="Add subject" onPress={() => setAddOpen(true)} style={styles.emptyAction} />}
+        />
       ) : (
         <View style={styles.list}>
           {subjects.map((subject) => {
@@ -177,8 +186,25 @@ export default function TodayScreen() {
         </>
       )}
 
-      <ErrorNote error={tree.error ?? classes.error} />
+      <ErrorNote error={tree.error ?? classes.error ?? addSubject.error} />
     </Screen>
+
+    <AddSubjectSheet
+      // Remount per open, so the fields start empty.
+      key={addOpen ? "open" : "closed"}
+      visible={addOpen}
+      existingCodes={subjects.map((subject) => subject.code)}
+      busy={addSubject.isPending}
+      error={addSubject.error}
+      onCancel={() => setAddOpen(false)}
+      onSubmit={({ code, name }) =>
+        addSubject.mutate(
+          { code, name, position: subjects.length },
+          { onSuccess: () => setAddOpen(false) },
+        )
+      }
+    />
+    </>
   );
 }
 
@@ -262,10 +288,31 @@ function isToday(date: Date, now: Date): boolean {
   return date.toDateString() === now.toDateString();
 }
 
-function SectionHeader({ title }: { title: string }) {
+function SectionHeader({
+  title,
+  onAdd,
+  addLabel,
+}: {
+  title: string;
+  onAdd?: () => void;
+  addLabel?: string;
+}) {
+  const colors = useTheme();
+
   return (
-    <View style={styles.sectionHeader}>
+    <View style={[styles.sectionHeader, onAdd ? styles.sectionHeaderRow : null]}>
       <Label>{title}</Label>
+      {onAdd && (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={addLabel}
+          hitSlop={10}
+          onPress={onAdd}
+          style={({ pressed }) => [styles.addButton, { opacity: pressed ? 0.6 : 1 }]}>
+          <Ionicons name="add" size={16} color={colors.tint} />
+          <Caption colour="tint">{addLabel}</Caption>
+        </Pressable>
+      )}
     </View>
   );
 }
@@ -273,6 +320,8 @@ function SectionHeader({ title }: { title: string }) {
 const styles = StyleSheet.create({
   gap: { height: Spacing.four },
   sectionHeader: { marginTop: Spacing.six, marginBottom: Spacing.three },
+  sectionHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  addButton: { flexDirection: 'row', alignItems: 'center', gap: Spacing.one },
   list: { gap: Spacing.three },
   spaceBetween: { justifyContent: 'space-between' },
   pressed: { opacity: 0.7 },

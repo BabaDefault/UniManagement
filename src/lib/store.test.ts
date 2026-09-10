@@ -3,9 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { parseBulkPaste, planMerge, type ExistingTopic } from './bulk-paste';
 import type { ParsedClass } from './ical';
 import {
+  addClassSeries,
   addSubject,
   applyPaste,
+  classSeries,
   createTerm,
+  deleteClass,
+  deleteClassSeries,
   deleteSubject,
   deleteSubtopic,
   deleteTopic,
@@ -14,13 +18,14 @@ import {
   ensureSubjects,
   newId,
   parseDatabase,
-  replaceClasses,
+  replaceImportedClasses,
   serialiseDatabase,
   setStatus,
+  updateClassSeries,
   updateTerm,
   type Database,
 } from './store';
-import { DEFAULT_TERM } from './terms';
+import { DEFAULT_TERM, termPositionForDate } from './terms';
 
 function seeded(): Database {
   let db = createTerm(EMPTY_DATABASE, DEFAULT_TERM);
@@ -214,45 +219,163 @@ describe('deletes', () => {
   });
 });
 
-describe('replaceClasses', () => {
-  function parsed(code: string, day: number): ParsedClass {
-    return {
-      subjectCode: code,
-      classType: 'LEC',
-      title: `${code} LEC`,
-      location: 'Ainsworth 202',
-      startsAt: new Date(2026, 8, day, 9, 0),
-      endsAt: new Date(2026, 8, day, 11, 0),
-      sourceUid: `${code}-uid`,
-    };
-  }
+function parsed(code: string, day: number): ParsedClass {
+  return {
+    subjectCode: code,
+    classType: 'LEC',
+    title: `${code} LEC`,
+    location: 'Ainsworth 202',
+    startsAt: new Date(2026, 8, day, 9, 0),
+    endsAt: new Date(2026, 8, day, 11, 0),
+    sourceUid: `${code}-uid`,
+  };
+}
 
-  it('replaces rather than merging, so dropped classes disappear', () => {
-    let db = replaceClasses(EMPTY_DATABASE, [parsed('COMP3311', 15), parsed('COMP1531', 16)]);
+const TERM = { id: 'term', ...DEFAULT_TERM };
+
+/** Tuesday 9-11am, the shape of a typical lecture slot. */
+const TUESDAY_LECTURE = {
+  subjectCode: 'COMP3311',
+  classType: 'LEC',
+  location: 'Ainsworth 202',
+  weekday: 2,
+  startMinutes: 9 * 60,
+  endMinutes: 11 * 60,
+};
+
+describe('replaceImportedClasses', () => {
+  it('replaces imported classes, so ones you dropped disappear', () => {
+    let db = replaceImportedClasses(EMPTY_DATABASE, [parsed('COMP3311', 15), parsed('COMP1531', 16)]);
     expect(db.classes).toHaveLength(2);
 
-    db = replaceClasses(db, [parsed('COMP3311', 15)]);
+    db = replaceImportedClasses(db, [parsed('COMP3311', 15)]);
     expect(db.classes.map((c) => c.subject_code)).toEqual(['COMP3311']);
   });
 
+  it('never deletes a class you entered by hand', () => {
+    // The classes actually attended matter more than the enrolment, so an
+    // import must not quietly wipe them.
+    let db = addClassSeries(EMPTY_DATABASE, TUESDAY_LECTURE, TERM);
+    const manualCount = db.classes.length;
+
+    db = replaceImportedClasses(db, [parsed('COMP1531', 16)]);
+    expect(db.classes.filter((c) => c.series_id !== null)).toHaveLength(manualCount);
+
+    db = replaceImportedClasses(db, []);
+    expect(db.classes).toHaveLength(manualCount);
+  });
+
   it('stores classes in chronological order', () => {
-    const db = replaceClasses(EMPTY_DATABASE, [parsed('B', 20), parsed('A', 15)]);
+    const db = replaceImportedClasses(EMPTY_DATABASE, [parsed('B', 20), parsed('A', 15)]);
     expect(db.classes.map((c) => c.subject_code)).toEqual(['A', 'B']);
+  });
+
+  it('marks imported classes as having no series', () => {
+    const db = replaceImportedClasses(EMPTY_DATABASE, [parsed('COMP3311', 15)]);
+    expect(db.classes[0].series_id).toBeNull();
   });
 
   it('leaves subjects untouched', () => {
     const db = seeded();
-    expect(replaceClasses(db, [parsed('COMP3311', 15)]).subjects).toBe(db.subjects);
+    expect(replaceImportedClasses(db, [parsed('COMP3311', 15)]).subjects).toBe(db.subjects);
   });
 
   it('accepts an empty timetable', () => {
-    expect(replaceClasses(seeded(), []).classes).toEqual([]);
+    expect(replaceImportedClasses(seeded(), []).classes).toEqual([]);
+  });
+});
+
+describe('hand-entered classes', () => {
+  it('repeats across every teaching week and skips Flexibility Week', () => {
+    const db = addClassSeries(EMPTY_DATABASE, TUESDAY_LECTURE, TERM);
+
+    // 10 calendar weeks minus week 6.
+    expect(db.classes).toHaveLength(9);
+
+    const weeks = db.classes.map((entry) => {
+      const position = termPositionForDate(new Date(entry.starts_at), TERM);
+      return position.kind === 'week' ? position.weekNumber : null;
+    });
+    expect(weeks).toEqual([1, 2, 3, 4, 5, 7, 8, 9, 10]);
+  });
+
+  it('keeps a 9am class at 9am after the October daylight-saving change', () => {
+    // Building occurrences by adding 7x24h would silently shift the back half
+    // of term to 10am once Sydney moves to AEDT.
+    const db = addClassSeries(EMPTY_DATABASE, TUESDAY_LECTURE, TERM);
+
+    for (const entry of db.classes) {
+      const start = new Date(entry.starts_at);
+      const end = new Date(entry.ends_at);
+      expect(start.getHours()).toBe(9);
+      expect(end.getHours()).toBe(11);
+      expect(start.getDay()).toBe(2);
+    }
+  });
+
+  it('creates the subject if it does not exist yet', () => {
+    const db = addClassSeries(EMPTY_DATABASE, TUESDAY_LECTURE, TERM);
+    expect(db.subjects.map((s) => s.code)).toEqual(['COMP3311']);
+  });
+
+  it('normalises the course code and type', () => {
+    const db = addClassSeries(EMPTY_DATABASE, { ...TUESDAY_LECTURE, subjectCode: ' comp3311 ', classType: 'lec' }, TERM);
+    expect(db.classes[0]).toMatchObject({ subject_code: 'COMP3311', class_type: 'LEC' });
+  });
+
+  it('collapses back into one row per weekly slot', () => {
+    let db = addClassSeries(EMPTY_DATABASE, TUESDAY_LECTURE, TERM);
+    db = addClassSeries(db, { ...TUESDAY_LECTURE, weekday: 4, startMinutes: 14 * 60, endMinutes: 15 * 60 }, TERM);
+
+    const series = classSeries(db);
+    expect(series).toHaveLength(2);
+    expect(series.map((s) => s.weekday)).toEqual([2, 4]);
+    expect(series[0]).toMatchObject({ subjectCode: 'COMP3311', startMinutes: 9 * 60, occurrences: 9 });
+  });
+
+  it('edits every occurrence at once', () => {
+    let db = addClassSeries(EMPTY_DATABASE, TUESDAY_LECTURE, TERM);
+    const seriesId = classSeries(db)[0].seriesId;
+
+    db = updateClassSeries(db, seriesId, { ...TUESDAY_LECTURE, weekday: 3, location: 'Quad G040' }, TERM);
+
+    expect(db.classes).toHaveLength(9);
+    expect(db.classes.every((c) => new Date(c.starts_at).getDay() === 3)).toBe(true);
+    expect(db.classes.every((c) => c.location === 'Quad G040')).toBe(true);
+    expect(classSeries(db)).toHaveLength(1);
+  });
+
+  it('deletes the whole series', () => {
+    let db = addClassSeries(EMPTY_DATABASE, TUESDAY_LECTURE, TERM);
+    db = addClassSeries(db, { ...TUESDAY_LECTURE, subjectCode: 'COMP1531', weekday: 3 }, TERM);
+
+    db = deleteClassSeries(db, classSeries(db)[0].seriesId);
+
+    expect(classSeries(db)).toHaveLength(1);
+    expect(classSeries(db)[0].subjectCode).toBe('COMP1531');
+  });
+
+  it('deletes a single occurrence, for one cancelled class', () => {
+    let db = addClassSeries(EMPTY_DATABASE, TUESDAY_LECTURE, TERM);
+    db = deleteClass(db, db.classes[0].id);
+
+    expect(db.classes).toHaveLength(8);
+    expect(classSeries(db)[0].occurrences).toBe(8);
+  });
+
+  it('survives a backup round trip', () => {
+    const db = addClassSeries(EMPTY_DATABASE, TUESDAY_LECTURE, TERM);
+    const restored = parseDatabase(serialiseDatabase(db));
+
+    expect(restored.classes).toHaveLength(9);
+    expect(classSeries(restored)).toHaveLength(1);
+    expect(classSeries(restored)[0]).toMatchObject({ subjectCode: 'COMP3311', startMinutes: 9 * 60 });
   });
 });
 
 describe('parseDatabase', () => {
   it('round-trips a serialised database', () => {
-    const db = replaceClasses(seeded(), []);
+    const db = replaceImportedClasses(seeded(), []);
     const restored = parseDatabase(serialiseDatabase(db));
 
     expect(restored.term).toEqual(db.term);

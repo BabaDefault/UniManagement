@@ -10,6 +10,8 @@ export type ClassEvent = {
   location: string | null;
   startsAt: Date;
   endsAt: Date;
+  /** Set for hand-entered classes; null for imported ones. Drives editability. */
+  seriesId: string | null;
 };
 
 export function toClassEvents(rows: readonly ClassRecord[]): ClassEvent[] {
@@ -22,6 +24,7 @@ export function toClassEvents(rows: readonly ClassRecord[]): ClassEvent[] {
       location: row.location,
       startsAt: new Date(row.starts_at),
       endsAt: new Date(row.ends_at),
+      seriesId: row.series_id ?? null,
     }))
     .sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
 }

@@ -21,6 +21,16 @@ export type ClassRecord = {
   ends_at: string;
   /** VEVENT UID from the myUNSW feed, when the import could find one. */
   source_uid: string | null;
+  /**
+   * Set when you added this class by hand. Every weekly occurrence of the same
+   * class shares one series id, so "delete this class" can mean the whole term
+   * rather than one Tuesday.
+   *
+   * Null means it came from a timetable import. That distinction is what lets a
+   * re-import replace the imported classes without touching the ones you
+   * entered — which matter more, since they are the classes you actually go to.
+   */
+  series_id: string | null;
 };
 
 export type SubtopicRecord = {

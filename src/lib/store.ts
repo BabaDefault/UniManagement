@@ -2,7 +2,7 @@ import type { MergePlan } from './bulk-paste';
 import type { ParsedClass } from './ical';
 import type { ClassRecord, SubjectRecord } from './records';
 import { STATUSES, type Status } from './status';
-import type { Term } from './terms';
+import { addDays, teachingWeekNumbers, weekStartDate, type Term } from './terms';
 
 /**
  * The entire app database, as one plain object.
@@ -186,15 +186,22 @@ export function applyPaste(
 
 // -------------------------------------------------------------------- classes
 
+function sortClasses(classes: ClassRecord[]): ClassRecord[] {
+  return classes.sort((a, b) => a.starts_at.localeCompare(b.starts_at));
+}
+
 /**
- * Replace the timetable outright.
+ * Replace the imported half of the timetable, leaving hand-entered classes be.
  *
- * Classes carry no judgement of yours — everything you set lives on subtopics —
- * so replacing is both safe and trivially correct, and it drops classes you are
- * no longer enrolled in, which merging would leave behind.
+ * Imported classes are disposable — re-importing is the correct way to pick up a
+ * changed enrolment. Classes you typed in are not: they are the ones you
+ * actually attend, including your friends' classes that your own timetable has
+ * never heard of, and an import must never silently delete them.
  */
-export function replaceClasses(db: Database, classes: readonly ParsedClass[]): Database {
-  const records: ClassRecord[] = classes.map((entry) => ({
+export function replaceImportedClasses(db: Database, classes: readonly ParsedClass[]): Database {
+  const manual = db.classes.filter((entry) => entry.series_id !== null);
+
+  const imported: ClassRecord[] = classes.map((entry) => ({
     id: newId('class'),
     subject_code: entry.subjectCode,
     class_type: entry.classType,
@@ -203,11 +210,120 @@ export function replaceClasses(db: Database, classes: readonly ParsedClass[]): D
     starts_at: entry.startsAt.toISOString(),
     ends_at: entry.endsAt.toISOString(),
     source_uid: entry.sourceUid,
+    series_id: null,
   }));
 
-  records.sort((a, b) => a.starts_at.localeCompare(b.starts_at));
+  return { ...db, classes: sortClasses([...manual, ...imported]) };
+}
 
-  return { ...db, classes: records };
+/** A class as you describe it: one weekly slot, repeated across the term. */
+export type ClassSeriesInput = {
+  subjectCode: string;
+  classType: string | null;
+  location: string | null;
+  /** JavaScript weekday, 0 = Sunday. */
+  weekday: number;
+  /** Minutes from local midnight. */
+  startMinutes: number;
+  endMinutes: number;
+};
+
+/**
+ * Build the weekly occurrences of a hand-entered class.
+ *
+ * Times are constructed from local date components rather than by adding
+ * milliseconds, so a 9am class is still 9am after Sydney moves to AEDT in
+ * October — adding 7×24h across that boundary would quietly shift it to 10am
+ * for the back half of term.
+ *
+ * Flexibility Week is skipped: there is no teaching that week.
+ */
+export function classOccurrences(
+  input: ClassSeriesInput,
+  term: Term,
+  seriesId: string,
+): ClassRecord[] {
+  const records: ClassRecord[] = [];
+  const offsetFromMonday = (input.weekday + 6) % 7;
+
+  for (const week of teachingWeekNumbers(term)) {
+    const day = addDays(weekStartDate(week, term), offsetFromMonday);
+
+    const startsAt = new Date(
+      day.getFullYear(),
+      day.getMonth(),
+      day.getDate(),
+      Math.floor(input.startMinutes / 60),
+      input.startMinutes % 60,
+    );
+    const endsAt = new Date(
+      day.getFullYear(),
+      day.getMonth(),
+      day.getDate(),
+      Math.floor(input.endMinutes / 60),
+      input.endMinutes % 60,
+    );
+
+    records.push({
+      id: newId('class'),
+      subject_code: input.subjectCode.trim().toUpperCase(),
+      class_type: input.classType?.trim().toUpperCase() || null,
+      title: [input.subjectCode.trim().toUpperCase(), input.classType?.trim().toUpperCase()]
+        .filter(Boolean)
+        .join(' '),
+      location: input.location?.trim() || null,
+      starts_at: startsAt.toISOString(),
+      ends_at: endsAt.toISOString(),
+      source_uid: null,
+      series_id: seriesId,
+    });
+  }
+
+  return records;
+}
+
+export function addClassSeries(db: Database, input: ClassSeriesInput, term: Term): Database {
+  const seriesId = newId('series');
+  const added = classOccurrences(input, term, seriesId);
+
+  return {
+    ...db,
+    classes: sortClasses([...db.classes, ...added]),
+    // A class you add for a course you have not set up yet should not vanish
+    // from Today because there is no matching subject.
+    subjects: ensureSubjects(db, [input.subjectCode]).subjects,
+  };
+}
+
+/** Edit every occurrence of a hand-entered class at once. */
+export function updateClassSeries(
+  db: Database,
+  seriesId: string,
+  input: ClassSeriesInput,
+  term: Term,
+): Database {
+  const others = db.classes.filter((entry) => entry.series_id !== seriesId);
+  const rebuilt = classOccurrences(input, term, seriesId);
+
+  return {
+    ...db,
+    classes: sortClasses([...others, ...rebuilt]),
+    subjects: ensureSubjects(db, [input.subjectCode]).subjects,
+  };
+}
+
+/** Remove every occurrence of a hand-entered class. */
+export function deleteClassSeries(db: Database, seriesId: string): Database {
+  return { ...db, classes: db.classes.filter((entry) => entry.series_id !== seriesId) };
+}
+
+/** Remove one occurrence — a single cancelled lecture, say. */
+export function deleteClass(db: Database, classId: string): Database {
+  return { ...db, classes: db.classes.filter((entry) => entry.id !== classId) };
+}
+
+export function clearImportedClasses(db: Database): Database {
+  return { ...db, classes: db.classes.filter((entry) => entry.series_id !== null) };
 }
 
 // ------------------------------------------------------------ serialisation
@@ -348,7 +464,57 @@ function parseClass(value: unknown): ClassRecord | null {
     starts_at: startsAt,
     ends_at: endsAt,
     source_uid: typeof record.source_uid === 'string' ? record.source_uid : null,
+    series_id: typeof record.series_id === 'string' ? record.series_id : null,
   };
+}
+
+/**
+ * The hand-entered classes, collapsed back into one row per weekly slot.
+ *
+ * Occurrences are what get stored and rendered on the timetable, but they are
+ * not what you think in — you think "COMP3311 lecture, Tuesdays 9 to 11", and
+ * that is what the edit and delete controls should act on.
+ */
+export type ClassSeries = ClassSeriesInput & {
+  seriesId: string;
+  occurrences: number;
+};
+
+export function classSeries(db: Database): ClassSeries[] {
+  const bySeries = new Map<string, ClassSeries>();
+
+  for (const entry of db.classes) {
+    if (entry.series_id === null) continue;
+
+    const existing = bySeries.get(entry.series_id);
+    if (existing) {
+      existing.occurrences += 1;
+      continue;
+    }
+
+    const startsAt = new Date(entry.starts_at);
+    const endsAt = new Date(entry.ends_at);
+
+    bySeries.set(entry.series_id, {
+      seriesId: entry.series_id,
+      subjectCode: entry.subject_code,
+      classType: entry.class_type,
+      location: entry.location,
+      weekday: startsAt.getDay(),
+      startMinutes: startsAt.getHours() * 60 + startsAt.getMinutes(),
+      endMinutes: endsAt.getHours() * 60 + endsAt.getMinutes(),
+      occurrences: 1,
+    });
+  }
+
+  return [...bySeries.values()].sort((a, b) => {
+    // Monday first, matching how a timetable reads.
+    const dayA = (a.weekday + 6) % 7;
+    const dayB = (b.weekday + 6) % 7;
+    if (dayA !== dayB) return dayA - dayB;
+    if (a.startMinutes !== b.startMinutes) return a.startMinutes - b.startMinutes;
+    return a.subjectCode.localeCompare(b.subjectCode);
+  });
 }
 
 /** A one-line description of a parsed backup, for the import confirmation. */

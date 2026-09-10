@@ -24,6 +24,7 @@ function event(id: string, start: [number, number, number, number, number], hour
     location: 'Ainsworth 202',
     startsAt,
     endsAt: new Date(y, m, d, hh + hours, mm),
+    seriesId: null,
   };
 }
 

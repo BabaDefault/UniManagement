@@ -139,12 +139,48 @@ export function useClasses(_termId?: string | undefined) {
 /**
  * Import a timetable, creating any subjects the feed mentions that do not exist
  * yet — otherwise the classes would show on Today with nothing to track against.
+ *
+ * Only the previously imported classes are replaced; anything entered by hand
+ * survives.
  */
 export function useImportClasses(_termId?: string) {
   return useDatabaseMutation<readonly ParsedClass[]>((db, classes) => {
     const codes = [...new Set(classes.map((entry) => entry.subjectCode))];
-    return store.replaceClasses(store.ensureSubjects(db, codes), classes);
+    return store.replaceImportedClasses(store.ensureSubjects(db, codes), classes);
   });
+}
+
+// ------------------------------------------------------- hand-entered classes
+
+/** The weekly slots you typed in, one row per class rather than per occurrence. */
+export function useClassSeries() {
+  const query = useDatabase();
+  const data = useMemo(() => (query.data ? store.classSeries(query.data) : []), [query.data]);
+  return { ...query, data };
+}
+
+export function useAddClassSeries(term: Term | null) {
+  return useDatabaseMutation<store.ClassSeriesInput>((db, input) =>
+    term ? store.addClassSeries(db, input, term) : db,
+  );
+}
+
+export function useUpdateClassSeries(term: Term | null) {
+  return useDatabaseMutation<{ seriesId: string; input: store.ClassSeriesInput }>((db, { seriesId, input }) =>
+    term ? store.updateClassSeries(db, seriesId, input, term) : db,
+  );
+}
+
+export function useDeleteClassSeries() {
+  return useDatabaseMutation<string>((db, seriesId) => store.deleteClassSeries(db, seriesId));
+}
+
+export function useDeleteClass() {
+  return useDatabaseMutation<string>((db, classId) => store.deleteClass(db, classId));
+}
+
+export function useClearImportedClasses() {
+  return useDatabaseMutation<void>((db) => store.clearImportedClasses(db));
 }
 
 // --------------------------------------------------------------------- backup

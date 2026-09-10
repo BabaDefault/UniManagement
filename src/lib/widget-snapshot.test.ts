@@ -13,6 +13,7 @@ function event(id: string, day: number, hour: number): ClassEvent {
     location: 'Ainsworth 202',
     startsAt: new Date(2026, 8, day, hour, 0),
     endsAt: new Date(2026, 8, day, hour + 1, 0),
+    seriesId: null,
   };
 }
 

@@ -79,5 +79,7 @@ export function snapshotToEvents(snapshot: WidgetSnapshot | null): ClassEvent[] 
     location: entry.location,
     startsAt: new Date(entry.startsAt),
     endsAt: new Date(entry.endsAt),
+    // The widget only displays classes; where they came from is the app's concern.
+    seriesId: null,
   }));
 }

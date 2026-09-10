@@ -106,36 +106,49 @@ function WeekTile({
 }) {
   const colors = useTheme();
   const status = summaryStatus(summary.fraction);
-  const fill = status ? `${STATUS_COLOR[status]}26` : 'transparent';
+  const empty = summary.total === 0;
 
   return (
     <Link href={{ pathname: '/subject/[id]/week/[week]', params: { id: subjectId, week } }} asChild>
-      <Pressable
-        style={({ pressed }) => [
-          styles.tile,
-          {
-            backgroundColor: fill,
-            borderColor: isCurrent ? colors.tint : colors.border,
-            borderWidth: isCurrent ? 2 : StyleSheet.hairlineWidth,
-            borderStyle: summary.total === 0 ? 'dashed' : 'solid',
-            opacity: pressed ? 0.7 : isFlex ? 0.75 : 1,
-          },
-        ]}>
-        <Caption colour={isFlex ? 'textFaint' : 'text'} style={styles.tileLabel}>
-          {label}
-        </Caption>
-        {summary.total === 0 ? (
-          <Caption colour="textFaint" style={styles.tileValue}>
-            —
+      <Pressable style={({ pressed }) => [styles.tileTouch, { opacity: pressed ? 0.65 : 1 }]}>
+        {/*
+          The box lives on this inner View rather than on the Pressable: Link's
+          asChild clones the Pressable, and its style did not survive that on
+          web, which left the tiles as bare floating text.
+        */}
+        <View
+          style={[
+            styles.tile,
+            {
+              backgroundColor: status ? `${STATUS_COLOR[status]}2E` : 'transparent',
+              borderColor: isCurrent ? colors.tint : empty ? colors.border : `${STATUS_COLOR[status!]}88`,
+              borderWidth: isCurrent ? 2 : 1,
+              borderStyle: empty ? 'dashed' : 'solid',
+            },
+          ]}>
+          <Caption colour={isFlex ? 'textFaint' : 'text'} style={styles.tileLabel}>
+            {label}
           </Caption>
-        ) : (
-          <Caption colour="textSecondary" style={styles.tileValue}>
-            {formatPercent(summary.fraction)}
+
+          <Caption colour={empty ? 'textFaint' : 'textSecondary'} style={styles.tileValue}>
+            {empty ? '—' : formatPercent(summary.fraction)}
           </Caption>
-        )}
-        {summary.weak > 0 && (
-          <View style={[styles.weakDot, { backgroundColor: STATUS_COLOR[summary.byStatus.red > 0 ? 'red' : 'yellow'] }]} />
-        )}
+
+          {/*
+            A fixed-height strip, so the weak marker cannot shift the label or
+            collide with it the way an absolutely positioned dot did.
+          */}
+          <View style={styles.markerRow}>
+            {summary.weak > 0 && (
+              <View
+                style={[
+                  styles.weakMarker,
+                  { backgroundColor: STATUS_COLOR[summary.byStatus.red > 0 ? 'red' : 'yellow'] },
+                ]}
+              />
+            )}
+          </View>
+        </View>
       </Pressable>
     </Link>
   );
@@ -146,16 +159,18 @@ const styles = StyleSheet.create({
   sectionHeader: { marginTop: Spacing.six, marginBottom: Spacing.three },
   spaceBetween: { justifyContent: 'space-between' },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.three },
+  tileTouch: { width: 76, height: 72 },
   tile: {
-    width: 76,
-    height: 68,
+    flex: 1,
     borderRadius: Radius.medium,
     alignItems: 'center',
     justifyContent: 'center',
     gap: Spacing.half,
+    paddingVertical: Spacing.two,
   },
   tileLabel: { fontWeight: '700' },
   tileValue: { fontSize: 12 },
-  weakDot: { position: 'absolute', top: 6, right: 6, width: 6, height: 6, borderRadius: 3 },
+  markerRow: { height: 4, justifyContent: 'center' },
+  weakMarker: { width: 16, height: 3, borderRadius: 2 },
   legend: { marginTop: Spacing.four },
 });
