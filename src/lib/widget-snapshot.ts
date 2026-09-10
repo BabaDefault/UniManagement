@@ -6,7 +6,7 @@ import type { ClassEvent } from './schedule';
  * The widget's data source.
  *
  * The widget runs as a headless task with no session and no network guarantee,
- * so it never queries Supabase. The app writes a small snapshot of upcoming
+ * so it never reads the database directly. The app writes a small snapshot of upcoming
  * classes to shared storage, and the widget recomputes "what's next" from that
  * at each refresh. Result: the widget is correct on campus wifi, in a tunnel,
  * or with the app force-stopped.

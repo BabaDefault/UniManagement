@@ -1,354 +1,159 @@
 import { useMutation, useQuery, useQueryClient, type QueryKey } from '@tanstack/react-query';
-import type { Session } from '@supabase/supabase-js';
-import { useEffect, useState } from 'react';
+import { useMemo } from 'react';
 
 import type { MergePlan } from './bulk-paste';
-import type { ClassRow, TermRow } from './db-types';
 import type { ParsedClass } from './ical';
+import { loadDatabase, mutateDatabase, replaceDatabase } from './local-db';
+import type { ClassRecord } from './records';
 import type { Status } from './status';
-import { supabase } from './supabase';
+import * as store from './store';
+import type { Database } from './store';
 import { DEFAULT_TERM, type Term } from './terms';
 import { sortTree, type SubjectNode } from './tree';
 
-export const treeKey = (termId: string): QueryKey => ['tree', termId];
-export const classesKey = (termId: string): QueryKey => ['classes', termId];
-export const termKey: QueryKey = ['active-term'];
+/**
+ * Hooks over the on-device database.
+ *
+ * There is one query — the whole database — and every view is derived from it.
+ * That is what keeps Today, the week grid and the tracker from ever disagreeing,
+ * and it makes a change a single pure function plus one cache write.
+ *
+ * The `termId` arguments are vestigial: with one local database there is only
+ * ever one term. They are kept so the screens read the same either way.
+ */
 
-function unwrap<T>({ data, error }: { data: T | null; error: { message: string } | null }): T {
-  if (error) throw new Error(error.message);
-  return data as T;
-}
+export const DB_KEY: QueryKey = ['database'];
 
-// ------------------------------------------------------------------- session
-
-export function useSession(): { session: Session | null; loading: boolean } {
-  const [session, setSession] = useState<Session | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let active = true;
-
-    supabase.auth.getSession().then(({ data }) => {
-      if (!active) return;
-      setSession(data.session);
-      setLoading(false);
-    });
-
-    const { data } = supabase.auth.onAuthStateChange((_event, next) => setSession(next));
-    return () => {
-      active = false;
-      data.subscription.unsubscribe();
-    };
-  }, []);
-
-  return { session, loading };
-}
-
-// ---------------------------------------------------------------------- term
-
-function toTerm(row: TermRow): Term {
-  return {
-    id: row.id,
-    code: row.code,
-    startDate: row.start_date,
-    numWeeks: row.num_weeks,
-    flexWeekNumber: row.flex_week_number,
-  };
-}
-
-export function useActiveTerm() {
+function useDatabase() {
   return useQuery({
-    queryKey: termKey,
-    queryFn: async (): Promise<Term | null> => {
-      const rows = unwrap(
-        await supabase
-          .from('terms')
-          .select('*')
-          .eq('is_active', true)
-          .order('created_at', { ascending: false })
-          .limit(1),
-      );
-      return rows.length > 0 ? toTerm(rows[0]) : null;
-    },
+    queryKey: DB_KEY,
+    queryFn: loadDatabase,
+    // Local storage is the only writer, and every mutation updates the cache
+    // directly, so there is nothing to go stale.
+    staleTime: Infinity,
+    gcTime: Infinity,
   });
 }
 
 /**
- * First-run setup. Deliberately an explicit action rather than something the
- * term query creates on a cache miss, so a slow network cannot produce two
- * terms from one launch.
+ * Apply a pure change, repaint immediately, then persist.
+ *
+ * The change is deliberately applied once and only once — several of these
+ * mint new ids, so an optimistic pass followed by a real one would duplicate
+ * every topic a paste creates.
  */
-export function useCreateTerm() {
+function useDatabaseMutation<Variables>(change: (db: Database, variables: Variables) => Database) {
   const client = useQueryClient();
 
   return useMutation({
-    mutationFn: async (term: Omit<Term, 'id'> = DEFAULT_TERM): Promise<Term> => {
-      const rows = unwrap(
-        await supabase
-          .from('terms')
-          .insert({
-            code: term.code,
-            start_date: term.startDate,
-            num_weeks: term.numWeeks,
-            flex_week_number: term.flexWeekNumber,
-            is_active: true,
-          })
-          .select(),
-      );
-      return toTerm(rows[0]);
-    },
-    onSuccess: (term) => client.setQueryData(termKey, term),
+    mutationFn: (variables: Variables) =>
+      mutateDatabase(
+        (db) => change(db, variables),
+        (next) => client.setQueryData(DB_KEY, next),
+      ),
+    onSuccess: (next) => client.setQueryData(DB_KEY, next),
   });
+}
+
+/** The whole database, for backup and restore. */
+export function useDatabaseSnapshot() {
+  return useDatabase();
+}
+
+// ----------------------------------------------------------------------- term
+
+export function useActiveTerm() {
+  const query = useDatabase();
+  return { ...query, data: query.data?.term ?? null };
+}
+
+export function useCreateTerm() {
+  return useDatabaseMutation<Omit<Term, 'id'>>((db, term) => store.createTerm(db, term ?? DEFAULT_TERM));
 }
 
 export function useUpdateTerm() {
-  const client = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (term: Term): Promise<Term> => {
-      const rows = unwrap(
-        await supabase
-          .from('terms')
-          .update({
-            code: term.code,
-            start_date: term.startDate,
-            num_weeks: term.numWeeks,
-            flex_week_number: term.flexWeekNumber,
-          })
-          .eq('id', term.id)
-          .select(),
-      );
-      return toTerm(rows[0]);
-    },
-    onSuccess: (term) => client.setQueryData(termKey, term),
-  });
+  return useDatabaseMutation<Term>((db, term) => store.updateTerm(db, term));
 }
 
-// ---------------------------------------------------------------------- tree
+// ----------------------------------------------------------------------- tree
 
-const TREE_SELECT =
-  'id, code, name, colour, position, topics(id, week_number, title, position, subtopics(id, title, status, position))';
+export function useTree(_termId?: string | undefined) {
+  const query = useDatabase();
 
-/**
- * The entire term in one request.
- *
- * A term tops out around a few hundred rows, so fetching it whole and deriving
- * every screen from it keeps Today, the week grid and the tracker consistent,
- * and makes an optimistic status change a single cache edit.
- */
-export function useTree(termId: string | undefined) {
-  return useQuery({
-    queryKey: treeKey(termId ?? 'none'),
-    enabled: Boolean(termId),
-    queryFn: async (): Promise<SubjectNode[]> => {
-      const rows = unwrap(await supabase.from('subjects').select(TREE_SELECT).eq('term_id', termId!));
-      return sortTree(rows as unknown as SubjectNode[]);
-    },
-  });
+  // Memoised on the database object, which only changes when something is
+  // actually written. Without this, every render would hand back a new array
+  // and re-trigger anything keyed on it — including the widget sync effect.
+  const data = useMemo<SubjectNode[] | undefined>(
+    () => (query.data ? sortTree(query.data.subjects) : undefined),
+    [query.data],
+  );
+
+  return { ...query, data };
 }
 
-function mapSubtopics(
-  subjects: SubjectNode[] | undefined,
-  fn: (subtopic: SubjectNode['topics'][number]['subtopics'][number]) => SubjectNode['topics'][number]['subtopics'][number],
-): SubjectNode[] | undefined {
-  return subjects?.map((subject) => ({
-    ...subject,
-    topics: subject.topics.map((topic) => ({ ...topic, subtopics: topic.subtopics.map(fn) })),
-  }));
+export function useSetStatus(_termId?: string) {
+  return useDatabaseMutation<{ subtopicId: string; status: Status }>((db, { subtopicId, status }) =>
+    store.setStatus(db, subtopicId, status),
+  );
 }
 
-/**
- * Status changes apply instantly and reconcile in the background — this is
- * tapped repeatedly during a lab, and a spinner per tap would make it unusable.
- */
-export function useSetStatus(termId: string) {
-  const client = useQueryClient();
-  const key = treeKey(termId);
+// --------------------------------------------------------------------- topics
 
-  return useMutation({
-    mutationFn: async ({ subtopicId, status }: { subtopicId: string; status: Status }) => {
-      unwrap(await supabase.from('subtopics').update({ status }).eq('id', subtopicId).select());
-    },
-    onMutate: async ({ subtopicId, status }) => {
-      await client.cancelQueries({ queryKey: key });
-      const previous = client.getQueryData<SubjectNode[]>(key);
-
-      client.setQueryData<SubjectNode[]>(key, (old) =>
-        mapSubtopics(old, (subtopic) => (subtopic.id === subtopicId ? { ...subtopic, status } : subtopic)),
-      );
-
-      return { previous };
-    },
-    onError: (_error, _variables, context) => {
-      if (context?.previous) client.setQueryData(key, context.previous);
-    },
-    onSettled: () => client.invalidateQueries({ queryKey: key }),
-  });
+export function useApplyPaste(_termId?: string) {
+  return useDatabaseMutation<{
+    subjectId: string;
+    weekNumber: number;
+    plan: MergePlan;
+    startPosition: number;
+  }>((db, variables) => store.applyPaste(db, variables));
 }
 
-// -------------------------------------------------------------------- topics
-
-export function useApplyPaste(termId: string) {
-  const client = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({
-      subjectId,
-      weekNumber,
-      plan,
-      startPosition,
-    }: {
-      subjectId: string;
-      weekNumber: number;
-      plan: MergePlan;
-      startPosition: number;
-    }) => {
-      if (plan.newTopics.length > 0) {
-        const inserted = unwrap(
-          await supabase
-            .from('topics')
-            .insert(
-              plan.newTopics.map((topic, index) => ({
-                subject_id: subjectId,
-                week_number: weekNumber,
-                title: topic.title,
-                position: startPosition + index,
-              })),
-            )
-            .select(),
-        );
-
-        // Match inserted rows back to their parsed topics by title; insert order
-        // is not guaranteed to come back unchanged.
-        const byTitle = new Map(inserted.map((row) => [row.title, row.id]));
-        const subtopicRows = plan.newTopics.flatMap((topic) =>
-          topic.subtopics.map((title, index) => ({
-            topic_id: byTitle.get(topic.title)!,
-            title,
-            position: index,
-          })),
-        );
-
-        if (subtopicRows.length > 0) unwrap(await supabase.from('subtopics').insert(subtopicRows).select());
-      }
-
-      for (const addition of plan.newSubtopics) {
-        const existing = unwrap(
-          await supabase.from('subtopics').select('position').eq('topic_id', addition.topicId),
-        );
-        const base = existing.reduce((max, row) => Math.max(max, row.position), -1) + 1;
-
-        unwrap(
-          await supabase
-            .from('subtopics')
-            .insert(addition.titles.map((title, index) => ({ topic_id: addition.topicId, title, position: base + index })))
-            .select(),
-        );
-      }
-    },
-    onSuccess: () => client.invalidateQueries({ queryKey: treeKey(termId) }),
-  });
+export function useDeleteTopic(_termId?: string) {
+  return useDatabaseMutation<string>((db, topicId) => store.deleteTopic(db, topicId));
 }
 
-export function useDeleteTopic(termId: string) {
-  const client = useQueryClient();
-
-  return useMutation({
-    mutationFn: async (topicId: string) => {
-      unwrap(await supabase.from('topics').delete().eq('id', topicId).select());
-    },
-    onSuccess: () => client.invalidateQueries({ queryKey: treeKey(termId) }),
-  });
+export function useDeleteSubtopic(_termId?: string) {
+  return useDatabaseMutation<string>((db, subtopicId) => store.deleteSubtopic(db, subtopicId));
 }
 
-export function useDeleteSubtopic(termId: string) {
-  const client = useQueryClient();
+// ------------------------------------------------------------------- subjects
 
-  return useMutation({
-    mutationFn: async (subtopicId: string) => {
-      unwrap(await supabase.from('subtopics').delete().eq('id', subtopicId).select());
-    },
-    onSuccess: () => client.invalidateQueries({ queryKey: treeKey(termId) }),
-  });
+export function useAddSubject(_termId?: string) {
+  return useDatabaseMutation<{ code: string; name?: string; position: number }>((db, variables) =>
+    store.addSubject(db, variables),
+  );
 }
 
-// ------------------------------------------------------------------ subjects
-
-export function useAddSubject(termId: string) {
-  const client = useQueryClient();
-
-  return useMutation({
-    mutationFn: async ({ code, name, position }: { code: string; name?: string; position: number }) => {
-      unwrap(
-        await supabase
-          .from('subjects')
-          .insert({ term_id: termId, code: code.trim().toUpperCase(), name: name?.trim() || null, position })
-          .select(),
-      );
-    },
-    onSuccess: () => client.invalidateQueries({ queryKey: treeKey(termId) }),
-  });
+export function useDeleteSubject(_termId?: string) {
+  return useDatabaseMutation<string>((db, subjectId) => store.deleteSubject(db, subjectId));
 }
 
-export function useDeleteSubject(termId: string) {
-  const client = useQueryClient();
+// -------------------------------------------------------------------- classes
 
-  return useMutation({
-    mutationFn: async (subjectId: string) => {
-      unwrap(await supabase.from('subjects').delete().eq('id', subjectId).select());
-    },
-    onSuccess: () => client.invalidateQueries({ queryKey: treeKey(termId) }),
-  });
-}
-
-// ------------------------------------------------------------------- classes
-
-export function useClasses(termId: string | undefined) {
-  return useQuery({
-    queryKey: classesKey(termId ?? 'none'),
-    enabled: Boolean(termId),
-    queryFn: async (): Promise<ClassRow[]> =>
-      unwrap(
-        await supabase.from('classes').select('*').eq('term_id', termId!).order('starts_at', { ascending: true }),
-      ),
-  });
+export function useClasses(_termId?: string | undefined) {
+  const query = useDatabase();
+  const data: ClassRecord[] | undefined = query.data?.classes;
+  return { ...query, data };
 }
 
 /**
- * Timetable import replaces the term's classes outright.
- *
- * Classes hold no user-entered state — every judgement lives on subtopics — so
- * replacing is both safe and trivially correct, and it handles dropped classes
- * that an upsert would leave orphaned.
+ * Import a timetable, creating any subjects the feed mentions that do not exist
+ * yet — otherwise the classes would show on Today with nothing to track against.
  */
-export function useImportClasses(termId: string) {
+export function useImportClasses(_termId?: string) {
+  return useDatabaseMutation<readonly ParsedClass[]>((db, classes) => {
+    const codes = [...new Set(classes.map((entry) => entry.subjectCode))];
+    return store.replaceClasses(store.ensureSubjects(db, codes), classes);
+  });
+}
+
+// --------------------------------------------------------------------- backup
+
+export function useRestoreBackup() {
   const client = useQueryClient();
 
   return useMutation({
-    mutationFn: async (classes: readonly ParsedClass[]) => {
-      unwrap(await supabase.from('classes').delete().eq('term_id', termId).select('id'));
-
-      if (classes.length === 0) return;
-
-      const rows = classes.map((entry) => ({
-        term_id: termId,
-        subject_code: entry.subjectCode,
-        class_type: entry.classType,
-        title: entry.title,
-        location: entry.location,
-        starts_at: entry.startsAt.toISOString(),
-        ends_at: entry.endsAt.toISOString(),
-        source_uid: entry.sourceUid,
-      }));
-
-      // Chunked so a full-term import stays under the request size limit.
-      for (let i = 0; i < rows.length; i += 200) {
-        unwrap(await supabase.from('classes').insert(rows.slice(i, i + 200)).select('id'));
-      }
-    },
-    onSuccess: () => {
-      client.invalidateQueries({ queryKey: classesKey(termId) });
-      client.invalidateQueries({ queryKey: treeKey(termId) });
-    },
+    mutationFn: (database: Database) => replaceDatabase(database),
+    onSuccess: (next) => client.setQueryData(DB_KEY, next),
   });
 }

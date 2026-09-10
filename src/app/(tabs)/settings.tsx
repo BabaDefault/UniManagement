@@ -19,18 +19,22 @@ import {
   useTheme,
 } from '@/components/ui';
 import { Radius } from '@/constants/theme';
+import { exportDatabase, pickBackup, type PickedBackup } from '@/lib/backup';
 import { canFetchUrl, fetchFeed, pickFeedFile } from '@/lib/import-timetable';
 import { dedupeClasses, parseTimetable, type ParsedClass } from '@/lib/ical';
 import {
   useActiveTerm,
   useAddSubject,
   useClasses,
+  useDatabaseSnapshot,
   useDeleteSubject,
   useImportClasses,
+  useRestoreBackup,
   useTree,
   useUpdateTerm,
 } from '@/lib/queries';
-import { supabase } from '@/lib/supabase';
+import { STATUS_COLOR } from '@/lib/status';
+import { describeDatabase } from '@/lib/store';
 import { addDays, DEFAULT_TERM, parseLocalDate, weekEndDate, type Term } from '@/lib/terms';
 
 export default function SettingsScreen() {
@@ -48,11 +52,107 @@ export default function SettingsScreen() {
       <SubjectsCard termId={term.data.id} subjects={tree.data ?? []} />
       <ImportCard term={term.data} importedCount={classes.data?.length ?? 0} />
 
-      <Card style={styles.card}>
-        <Heading>Account</Heading>
-        <Button title="Sign out" variant="secondary" onPress={() => supabase.auth.signOut()} />
-      </Card>
+      <BackupCard />
     </Screen>
+  );
+}
+
+// --------------------------------------------------------------------- backup
+
+/**
+ * Everything lives on this device only, so this card is the entire safety net:
+ * the backup against a reinstall, and the only bridge between phone and laptop.
+ */
+function BackupCard() {
+  const snapshot = useDatabaseSnapshot();
+  const restore = useRestoreBackup();
+
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [pending, setPending] = useState<PickedBackup | null>(null);
+
+  async function run(action: () => Promise<void>) {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await action();
+    } catch (caught) {
+      setError(caught);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card style={styles.card}>
+      <Heading>Backup</Heading>
+      <Caption colour="textSecondary">
+        Your data is stored on this device only. Nothing syncs — export a file to back it up, or to move
+        your progress between your phone and your laptop.
+      </Caption>
+      {snapshot.data && <Caption colour="textFaint">{describeDatabase(snapshot.data)}</Caption>}
+
+      <Button
+        title="Export backup"
+        variant="secondary"
+        loading={busy}
+        disabled={!snapshot.data}
+        onPress={() =>
+          run(async () => {
+            const result = await exportDatabase(snapshot.data!);
+            setNotice(
+              result.shared
+                ? `Exported ${result.name}.`
+                : `Saved ${result.name} to the app's storage — no share targets available.`,
+            );
+          })
+        }
+      />
+
+      <Button
+        title="Restore from file"
+        variant="secondary"
+        loading={busy}
+        onPress={() =>
+          run(async () => {
+            const picked = await pickBackup();
+            if (picked) setPending(picked);
+          })
+        }
+      />
+
+      {notice && <Caption colour="textSecondary">{notice}</Caption>}
+      <ErrorNote error={error ?? restore.error} />
+
+      {pending && (
+        <View style={[styles.preview, { borderColor: STATUS_COLOR.red }]}>
+          <Label>Replace everything?</Label>
+          <Body>{describeDatabase(pending.database)}</Body>
+          <Caption colour="textFaint">
+            From {pending.name}. This overwrites the term, subjects, every status and the timetable on
+            this device. It cannot be undone.
+          </Caption>
+          <Row style={styles.fieldRow}>
+            <Button title="Cancel" variant="secondary" style={styles.flex} onPress={() => setPending(null)} />
+            <Button
+              title="Replace"
+              style={styles.flex}
+              loading={restore.isPending}
+              onPress={() =>
+                restore.mutate(pending.database, {
+                  onSuccess: () => {
+                    setPending(null);
+                    setNotice(`Restored from ${pending.name}.`);
+                  },
+                })
+              }
+            />
+          </Row>
+        </View>
+      )}
+    </Card>
   );
 }
 

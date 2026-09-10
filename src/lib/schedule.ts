@@ -1,4 +1,4 @@
-import type { ClassRow } from './db-types';
+import type { ClassRecord } from './records';
 import { addDays, startOfLocalDay } from './terms';
 
 /** A class occurrence with real Dates, shared by the Today screen and the widget. */
@@ -12,7 +12,7 @@ export type ClassEvent = {
   endsAt: Date;
 };
 
-export function toClassEvents(rows: readonly ClassRow[]): ClassEvent[] {
+export function toClassEvents(rows: readonly ClassRecord[]): ClassEvent[] {
   return rows
     .map((row) => ({
       id: row.id,

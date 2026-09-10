@@ -8,8 +8,18 @@ import 'expo-router/entry';
 import { Platform } from 'react-native';
 
 if (Platform.OS === 'android') {
-  const { registerWidgetTaskHandler } = require('react-native-android-widget');
-  const { widgetTaskHandler } = require('./src/widget-task-handler');
+  try {
+    const { registerWidgetTaskHandler } = require('react-native-android-widget');
+    const { widgetTaskHandler } = require('./src/widget-task-handler');
 
-  registerWidgetTaskHandler(widgetTaskHandler);
+    registerWidgetTaskHandler(widgetTaskHandler);
+  } catch (error) {
+    // Expo Go does not contain this library's native module, so requiring it
+    // there throws and would take the whole app down at startup. The widget
+    // simply does not exist in Expo Go; everything else should still run.
+    console.warn(
+      'Home screen widget unavailable — this build has no native widget module (expected in Expo Go).',
+      error,
+    );
+  }
 }
