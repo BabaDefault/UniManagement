@@ -1,3 +1,10 @@
+// The React Compiler is on for this app (app.json experiments.reactCompiler), and
+// it rewrites components to use memoization hooks. These are not React components
+// in the normal sense: react-native-android-widget calls them as plain functions to
+// build a RemoteViews tree, so any hook it injects throws
+// "Invalid Hook Call detected" and the widget draws nothing at all.
+'use no memo';
+
 import { FlexWidget, TextWidget, type HexColor } from 'react-native-android-widget';
 
 import { formatCountdown, formatDayLabel, formatTime, remainingToday, upNext, type ClassEvent } from '@/lib/schedule';
@@ -47,6 +54,10 @@ export function TimetableWidget({
   now: Date;
   palette: Palette;
 }) {
+  // Belt and braces alongside the file-level directive: this one is honoured
+  // per-function regardless of how the file-level prologue is treated.
+  'use no memo';
+
   const next = upNext(events, now);
   const rest = remainingToday(events, now);
   const later = next.kind === 'none' ? [] : rest.filter((event) => event.startsAt > next.event.startsAt);
@@ -147,6 +158,8 @@ export function renderTimetableWidget(events: ClassEvent[], now: Date) {
 }
 
 function MessageWidget({ message, palette }: { message: string; palette: Palette }) {
+  'use no memo';
+
   return (
     <FlexWidget
       clickAction="OPEN_APP"
