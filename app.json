@@ -41,10 +41,10 @@
             {
               "name": "Timetable",
               "label": "Timetable",
-              "description": "Your next class and what is left today",
+              "description": "Your next class and what follows it that day",
               "minWidth": "180dp",
               "minHeight": "110dp",
-              "targetCellWidth": 4,
+              "targetCellWidth": 3,
               "targetCellHeight": 2,
               "resizeMode": "horizontal|vertical",
               "updatePeriodMillis": 1800000

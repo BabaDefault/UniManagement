@@ -5,12 +5,20 @@
 // "Invalid Hook Call detected" and the widget draws nothing at all.
 'use no memo';
 
-import { FlexWidget, TextWidget, type HexColor } from 'react-native-android-widget';
+import { FlexWidget, TextWidget, type ColorProp, type HexColor } from 'react-native-android-widget';
 
-import { formatCountdown, formatDayLabel, formatTime, remainingToday, upNext, type ClassEvent } from '@/lib/schedule';
+import {
+  classesAfterOnSameDay,
+  formatCountdown,
+  formatDayLabel,
+  formatDayWord,
+  formatTime,
+  upNext,
+  type ClassEvent,
+} from '@/lib/schedule';
 
 /**
- * The Android home screen widget: what class is next, then what is left today.
+ * The Android home screen widget: what class is next, then what else is on that day.
  *
  * Timetable only — progress lives in the app, where it is edited. Everything is
  * computed from the local snapshot, so this renders with no network and no
@@ -27,6 +35,8 @@ type Palette = {
   muted: HexColor;
   faint: HexColor;
   accent: HexColor;
+  /** The divider. Deliberately weaker than `faint` — a rule should separate, not announce. */
+  rule: ColorProp;
 };
 
 const LIGHT: Palette = {
@@ -35,6 +45,7 @@ const LIGHT: Palette = {
   muted: '#60646C',
   faint: '#8B8D98',
   accent: '#0B69C7',
+  rule: 'rgba(139, 141, 152, 0.3)',
 };
 
 const DARK: Palette = {
@@ -43,6 +54,7 @@ const DARK: Palette = {
   muted: '#B0B4BA',
   faint: '#7E8289',
   accent: '#5AA9F5',
+  rule: 'rgba(126, 130, 137, 0.35)',
 };
 
 export function TimetableWidget({
@@ -59,8 +71,10 @@ export function TimetableWidget({
   'use no memo';
 
   const next = upNext(events, now);
-  const rest = remainingToday(events, now);
-  const later = next.kind === 'none' ? [] : rest.filter((event) => event.startsAt > next.event.startsAt);
+  // Anchored to the featured class's own day, not to today: the widget regularly
+  // leads with a class that is several days out, and "what else is on" has to
+  // mean that day or the lower half is permanently empty.
+  const later = next.kind === 'none' ? [] : classesAfterOnSameDay(events, next.event).slice(0, 2);
 
   return (
     <FlexWidget
@@ -71,20 +85,25 @@ export function TimetableWidget({
         flexDirection: 'column',
         backgroundColor: palette.background,
         borderRadius: 16,
-        padding: 14,
+        padding: 12,
       }}>
       {next.kind === 'none' ? (
         <FlexWidget style={{ flexDirection: 'column' }}>
-          <TextWidget text="No classes scheduled" style={{ fontSize: 14, color: palette.muted }} />
-          <TextWidget text="Import your timetable in the app" style={{ fontSize: 11, color: palette.faint }} />
+          <TextWidget text="No classes scheduled" style={{ fontSize: 16, color: palette.muted }} />
+          <TextWidget
+            text="Import your timetable in the app"
+            style={{ fontSize: 13, color: palette.faint, marginTop: 2 }}
+          />
         </FlexWidget>
       ) : (
-        <FlexWidget style={{ flexDirection: 'column', width: 'match_parent' }}>
+        // match_parent height is what gives the flexible spacer below something to
+        // expand into; on a wrap_content column the weight collapses to nothing.
+        <FlexWidget style={{ flexDirection: 'column', width: 'match_parent', height: 'match_parent' }}>
           <FlexWidget
             style={{ flexDirection: 'row', width: 'match_parent', justifyContent: 'space-between' }}>
             <TextWidget
               text={next.event.subjectCode}
-              style={{ fontSize: 17, fontWeight: '700', color: palette.text }}
+              style={{ fontSize: 18, fontWeight: '700', color: palette.text }}
             />
             <TextWidget
               text={next.kind === 'now' ? 'NOW' : formatCountdown(now, next.event.startsAt).toUpperCase()}
@@ -94,14 +113,14 @@ export function TimetableWidget({
 
           <TextWidget
             text={[next.event.classType, formatTime(next.event.startsAt)].filter(Boolean).join(' · ')}
-            style={{ fontSize: 13, color: palette.muted, marginTop: 2 }}
+            style={{ fontSize: 14, color: palette.muted, marginTop: 3 }}
           />
 
           {next.event.location ? (
             <TextWidget
               text={next.event.location}
               maxLines={1}
-              style={{ fontSize: 11, color: palette.faint, marginTop: 1 }}
+              style={{ fontSize: 12, color: palette.faint, marginTop: 1 }}
             />
           ) : (
             <FlexWidget style={{ height: 0 }} />
@@ -110,34 +129,51 @@ export function TimetableWidget({
           {next.kind === 'next' && !isSameDay(next.event.startsAt, now) ? (
             <TextWidget
               text={formatDayLabel(next.event.startsAt, now)}
-              style={{ fontSize: 11, color: palette.faint, marginTop: 1 }}
+              style={{ fontSize: 12, color: palette.faint, marginTop: 1 }}
             />
           ) : (
             <FlexWidget style={{ height: 0 }} />
           )}
 
+          {/* Keeps the list below pinned to the bottom edge however tall the user makes it. */}
+          <FlexWidget style={{ flex: 1 }} />
+
+          <FlexWidget
+            style={{
+              height: 1,
+              width: 'match_parent',
+              backgroundColor: palette.rule,
+              marginTop: 8,
+              marginBottom: 6,
+            }}
+          />
+
           {later.length > 0 ? (
-            <FlexWidget style={{ flexDirection: 'column', width: 'match_parent', marginTop: 8 }}>
-              {later.slice(0, 3).map((event) => (
+            <FlexWidget style={{ flexDirection: 'column', width: 'match_parent' }}>
+              {later.map((event) => (
                 <FlexWidget
                   key={event.id}
                   style={{
                     flexDirection: 'row',
                     width: 'match_parent',
                     justifyContent: 'space-between',
-                    marginTop: 2,
+                    marginTop: 4,
                   }}>
                   <TextWidget
                     text={`${event.subjectCode}${event.classType ? ` · ${event.classType}` : ''}`}
                     maxLines={1}
-                    style={{ fontSize: 12, color: palette.muted }}
+                    style={{ fontSize: 13, color: palette.muted }}
                   />
-                  <TextWidget text={formatTime(event.startsAt)} style={{ fontSize: 12, color: palette.faint }} />
+                  <TextWidget text={formatTime(event.startsAt)} style={{ fontSize: 13, color: palette.faint }} />
                 </FlexWidget>
               ))}
             </FlexWidget>
           ) : (
-            <FlexWidget style={{ height: 0 }} />
+            <TextWidget
+              text={`Nothing else ${formatDayWord(next.event.startsAt, now)}`}
+              maxLines={1}
+              style={{ fontSize: 13, color: palette.faint, marginTop: 4 }}
+            />
           )}
         </FlexWidget>
       )}

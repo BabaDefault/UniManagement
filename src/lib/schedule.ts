@@ -42,6 +42,16 @@ export function remainingToday(events: readonly ClassEvent[], now: Date): ClassE
   return classesOnDay(events, now).filter((event) => event.endsAt > now);
 }
 
+/**
+ * Classes on the same local day as `event`, starting after it.
+ *
+ * The widget leads with a class that may be days away, so "what else is on"
+ * has to be anchored to that class's day rather than to today.
+ */
+export function classesAfterOnSameDay(events: readonly ClassEvent[], event: ClassEvent): ClassEvent[] {
+  return classesOnDay(events, event.startsAt).filter((other) => other.startsAt > event.startsAt);
+}
+
 export type UpNext =
   | { kind: 'now'; event: ClassEvent }
   | { kind: 'next'; event: ClassEvent }
@@ -121,6 +131,13 @@ export function formatDayLabel(day: Date, now: Date): string {
   if (isSameLocalDay(day, now)) return 'Today';
   if (isSameLocalDay(day, addDays(startOfLocalDay(now), 1))) return 'Tomorrow';
   return `${WEEKDAYS[day.getDay()]} ${day.getDate()} ${MONTHS[day.getMonth()]}`;
+}
+
+/** "today" / "tomorrow" / "Monday" — the lowercase form that reads inside a sentence. */
+export function formatDayWord(day: Date, now: Date): string {
+  if (isSameLocalDay(day, now)) return 'today';
+  if (isSameLocalDay(day, addDays(startOfLocalDay(now), 1))) return 'tomorrow';
+  return WEEKDAYS[day.getDay()];
 }
 
 export function formatShortDay(day: Date): string {

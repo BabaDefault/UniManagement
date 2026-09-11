@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  classesAfterOnSameDay,
   classesBetween,
   formatCountdown,
   formatDayLabel,
+  formatDayWord,
   formatTime,
   formatTimeRange,
   groupByDay,
@@ -78,6 +80,19 @@ describe('remainingToday', () => {
   });
 });
 
+describe('classesAfterOnSameDay', () => {
+  it('lists what follows on the featured class own day, not on today', () => {
+    // The widget is looking at Tuesday from the previous Friday. Anchoring to
+    // "today" would return nothing and leave half the widget blank.
+    expect(classesAfterOnSameDay(events, lecture).map((e) => e.id)).toEqual(['COMP1531-tut']);
+  });
+
+  it('excludes the featured class and everything on later days', () => {
+    expect(classesAfterOnSameDay(events, tutorial)).toEqual([]);
+    expect(classesAfterOnSameDay(events, nextDay)).toEqual([]);
+  });
+});
+
 describe('toClassEvents', () => {
   it('parses rows and sorts them chronologically', () => {
     const rows = [
@@ -137,5 +152,12 @@ describe('formatting', () => {
     expect(formatDayLabel(new Date(2026, 8, 15), now)).toBe('Today');
     expect(formatDayLabel(new Date(2026, 8, 16), now)).toBe('Tomorrow');
     expect(formatDayLabel(new Date(2026, 8, 18), now)).toBe('Friday 18 Sep');
+  });
+
+  it('names days in the lowercase form that reads inside a sentence', () => {
+    const now = new Date(2026, 8, 15, 8, 0);
+    expect(formatDayWord(new Date(2026, 8, 15), now)).toBe('today');
+    expect(formatDayWord(new Date(2026, 8, 16), now)).toBe('tomorrow');
+    expect(formatDayWord(new Date(2026, 8, 18), now)).toBe('Friday');
   });
 });
