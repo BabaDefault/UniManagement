@@ -1,6 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useState } from 'react';
-import { Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { useMemo, useState } from 'react';
+import { Platform, Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import {
   Body,
@@ -23,6 +23,7 @@ import { Radius } from '@/constants/theme';
 import { exportDatabase, pickBackup, type PickedBackup } from '@/lib/backup';
 import { canFetchUrl, fetchFeed, pickFeedFile } from '@/lib/import-timetable';
 import { dedupeClasses, parseTimetable, type ParsedClass } from '@/lib/ical';
+import { toClassEvents } from '@/lib/schedule';
 import {
   useActiveTerm,
   useClasses,
@@ -35,6 +36,7 @@ import {
 } from '@/lib/queries';
 import { STATUS_COLOR } from '@/lib/status';
 import { describeDatabase } from '@/lib/store';
+import { syncWidget, widgetDiagnostics } from '@/lib/widget-bridge';
 import { addDays, DEFAULT_TERM, parseLocalDate, weekEndDate, type Term } from '@/lib/terms';
 
 export default function SettingsScreen() {
@@ -52,8 +54,76 @@ export default function SettingsScreen() {
       <SubjectsCard termId={term.data.id} subjects={tree.data ?? []} />
       <ImportCard term={term.data} importedCount={classes.data?.length ?? 0} />
 
+      {Platform.OS === 'android' && <WidgetCard />}
+
       <BackupCard />
     </Screen>
+  );
+}
+
+// --------------------------------------------------------------------- widget
+
+/**
+ * Somewhere to see why the home screen widget is misbehaving.
+ *
+ * A widget that fails draws an empty rectangle and reports nothing, and reading
+ * device logs needs a cable and the Android SDK. This puts the actual error in
+ * front of the one person who can see the widget.
+ */
+function WidgetCard() {
+  const colors = useTheme();
+  const classes = useClasses();
+  const events = useMemo(() => toClassEvents(classes.data ?? []), [classes.data]);
+
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const [report, setReport] = useState<string[] | null>(null);
+
+  return (
+    <Card style={styles.card}>
+      <Heading>Widget</Heading>
+      <Caption colour="textSecondary">
+        Long-press your home screen → Widgets → Semester Tracker → Timetable. It refreshes itself about
+        every 30 minutes, and whenever you open the app.
+      </Caption>
+
+      <Button
+        title="Refresh the widget now"
+        variant="secondary"
+        loading={busy}
+        onPress={async () => {
+          setBusy(true);
+          setReport(null);
+          const outcome = await syncWidget(events);
+          setResult(outcome.detail);
+          setBusy(false);
+        }}
+      />
+
+      <Button
+        title="Why is my widget blank?"
+        variant="secondary"
+        loading={busy}
+        onPress={async () => {
+          setBusy(true);
+          setResult(null);
+          setReport(await widgetDiagnostics());
+          setBusy(false);
+        }}
+      />
+
+      {result && <Caption colour="textSecondary">{result}</Caption>}
+
+      {report && (
+        <View style={[styles.preview, { borderColor: colors.border }]}>
+          {report.map((line) => (
+            <Caption key={line} colour="textFaint">
+              {line}
+            </Caption>
+          ))}
+        </View>
+      )}
+    </Card>
   );
 }
 

@@ -2,17 +2,17 @@ import { useEffect } from 'react';
 import { AppState, Platform } from 'react-native';
 
 import type { ClassEvent } from '@/lib/schedule';
-import { saveWidgetSnapshot } from '@/lib/widget-snapshot';
+import { syncWidget } from '@/lib/widget-bridge';
 
 /**
  * Keeps the home screen widget in step with the app.
  *
- * Writes the local snapshot the widget reads, then asks Android to redraw now
- * rather than waiting up to 30 minutes for the next scheduled update — so an
- * import or a timetable change shows on the home screen immediately.
+ * Writes the snapshot the widget reads and asks Android to redraw now, rather
+ * than waiting up to 30 minutes for the next scheduled update.
  *
- * The widget module is imported lazily inside the Android branch: it is a
- * native module, and pulling it into the web bundle would break the laptop build.
+ * Failures are reported through Settings → Widget rather than thrown: a broken
+ * widget must never stop the app rendering, but it must also not vanish
+ * silently the way it did when this swallowed errors.
  */
 export function useWidgetSync(events: ClassEvent[]): void {
   useEffect(() => {
@@ -20,23 +20,10 @@ export function useWidgetSync(events: ClassEvent[]): void {
 
     let cancelled = false;
 
-    async function sync() {
-      try {
-        await saveWidgetSnapshot(events);
-        if (cancelled) return;
-
-        const { requestWidgetUpdate } = await import('react-native-android-widget');
-        const { renderTimetableWidget } = await import('@/widgets/timetable-widget');
-
-        await requestWidgetUpdate({
-          widgetName: 'Timetable',
-          renderWidget: () => renderTimetableWidget(events, new Date()),
-          // Nothing to do if the widget is not on the home screen.
-          widgetNotFound: () => {},
-        });
-      } catch {
-        // A widget failure must never take the app down with it.
-      }
+    function sync() {
+      void syncWidget(events).then((result) => {
+        if (!cancelled && !result.ok) console.warn('Widget sync:', result.detail);
+      });
     }
 
     sync();

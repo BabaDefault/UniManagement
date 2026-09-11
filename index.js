@@ -1,10 +1,13 @@
-// Custom entry point: expo-router's, plus the Android widget's headless task.
+// Custom entry point: the Android widget's headless task, then expo-router's app.
 //
-// The task handler must be registered at module scope so Android can invoke it
-// when the app itself is not running — registering it inside a component would
-// mean the widget only updates while the app is open.
-import 'expo-router/entry';
-
+// Order matters. Android runs this same bundle to draw the widget, with no
+// Activity and often with the app not running at all. If booting the router
+// throws or stalls in that context, anything after it never executes — so the
+// task handler is registered FIRST, before the app is started.
+//
+// `require` rather than `import` for the router entry precisely because ES
+// imports are hoisted: written as an import it would run before this block no
+// matter where it sat in the file.
 import { Platform } from 'react-native';
 
 if (Platform.OS === 'android') {
@@ -14,12 +17,11 @@ if (Platform.OS === 'android') {
 
     registerWidgetTaskHandler(widgetTaskHandler);
   } catch (error) {
-    // Expo Go does not contain this library's native module, so requiring it
-    // there throws and would take the whole app down at startup. The widget
-    // simply does not exist in Expo Go; everything else should still run.
-    console.warn(
-      'Home screen widget unavailable — this build has no native widget module (expected in Expo Go).',
-      error,
-    );
+    // Expo Go has no native widget module, so requiring it there throws and
+    // would take the whole app down at startup. The widget simply does not
+    // exist in Expo Go; everything else should still run.
+    console.warn('Home screen widget unavailable — no native widget module in this build.', error);
   }
 }
+
+require('expo-router/entry');

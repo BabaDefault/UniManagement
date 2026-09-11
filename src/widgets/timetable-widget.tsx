@@ -145,3 +145,36 @@ export function renderTimetableWidget(events: ClassEvent[], now: Date) {
     dark: <TimetableWidget events={events} now={now} palette={DARK} />,
   };
 }
+
+function MessageWidget({ message, palette }: { message: string; palette: Palette }) {
+  return (
+    <FlexWidget
+      clickAction="OPEN_APP"
+      style={{
+        height: 'match_parent',
+        width: 'match_parent',
+        flexDirection: 'column',
+        justifyContent: 'center',
+        backgroundColor: palette.background,
+        borderRadius: 16,
+        padding: 14,
+      }}>
+      <TextWidget text="Semester Tracker" style={{ fontSize: 13, fontWeight: '700', color: palette.text }} />
+      <TextWidget text={message} style={{ fontSize: 11, color: palette.faint, marginTop: 2 }} />
+    </FlexWidget>
+  );
+}
+
+/**
+ * Anything rather than nothing.
+ *
+ * A widget that draws no tree at all is indistinguishable from one whose task
+ * never ran — both are an empty frame on the home screen. Drawing a message
+ * proves the handler executed and says what to do next.
+ */
+export function renderMessageWidget(message: string) {
+  return {
+    light: <MessageWidget message={message} palette={LIGHT} />,
+    dark: <MessageWidget message={message} palette={DARK} />,
+  };
+}

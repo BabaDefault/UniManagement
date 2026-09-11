@@ -1,0 +1,47 @@
+diff --git a/node_modules/react-native-android-widget/android/src/main/java/com/reactnativeandroidwidget/oss/HeadlessJsTaskWorker.java b/node_modules/react-native-android-widget/android/src/main/java/com/reactnativeandroidwidget/oss/HeadlessJsTaskWorker.java
+index 269a75d..610b139 100644
+--- a/node_modules/react-native-android-widget/android/src/main/java/com/reactnativeandroidwidget/oss/HeadlessJsTaskWorker.java
++++ b/node_modules/react-native-android-widget/android/src/main/java/com/reactnativeandroidwidget/oss/HeadlessJsTaskWorker.java
+@@ -87,10 +87,41 @@ public abstract class HeadlessJsTaskWorker extends ListenableWorker implements H
+         }
+     }
+ 
++    // PATCHED (patch-package): wait for the React instance to actually be active.
++    //
++    // onReactContextInitialized fires once the ReactContext object exists, but in
++    // bridgeless mode the JS instance is not live yet at that point. React Native's
++    // HeadlessJsTaskContext.startTask checks reactContext.hasActiveReactInstance()
++    // and, when false, drops the task with a soft exception reading
++    // "Cannot start headless task, CatalystInstance not available". The widget then
++    // never draws and shows an empty frame with no error anywhere.
++    //
++    // Polling the main looper until the instance is live fixes the race. Capped so a
++    // genuinely dead instance cannot leave this looping forever.
++    private static final int START_TASK_MAX_ATTEMPTS = 100;
++    private static final long START_TASK_RETRY_MS = 100;
++
+     private void invokeStartTask(ReactContext reactContext, final HeadlessJsTaskConfig taskConfig) {
+         final HeadlessJsTaskContext headlessJsTaskContext = HeadlessJsTaskContext.getInstance(reactContext);
+         headlessJsTaskContext.addTaskEventListener(this);
+-        UiThreadUtil.runOnUiThread(() -> this.taskId = headlessJsTaskContext.startTask(taskConfig));
++        startWhenInstanceIsActive(reactContext, headlessJsTaskContext, taskConfig, 0);
++    }
++
++    private void startWhenInstanceIsActive(
++            final ReactContext reactContext,
++            final HeadlessJsTaskContext headlessJsTaskContext,
++            final HeadlessJsTaskConfig taskConfig,
++            final int attempt) {
++        UiThreadUtil.runOnUiThread(() -> {
++            if (reactContext.hasActiveReactInstance()) {
++                this.taskId = headlessJsTaskContext.startTask(taskConfig);
++            } else if (attempt < START_TASK_MAX_ATTEMPTS) {
++                new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
++                        () -> startWhenInstanceIsActive(
++                                reactContext, headlessJsTaskContext, taskConfig, attempt + 1),
++                        START_TASK_RETRY_MS);
++            }
++        });
+     }
+ 
+     private void cleanUpTask() {
